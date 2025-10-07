@@ -12,59 +12,138 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 
     <style>
-        /* Styles remain the same for functionality */
+        /*
+         * GLOBAL STYLES
+         */
         body { 
-            font-family: sans-serif; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Modern Font Stack */
             display: flex; 
             justify-content: center; 
             align-items: flex-start; 
-            gap: 30px; 
-            padding: 20px; 
-            background-color: #f4f4f4;
+            gap: 40px; /* Increased spacing */
+            padding: 30px; 
+            background-color: #f0f2f5; /* Light, soft background */
+            color: #333; /* Darker text */
         }
+        
+        /* Main Content Boxes */
         .container { 
             display: flex; 
             flex-direction: column; 
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            background: #ffffff;
+            padding: 30px; /* Increased padding */
+            border-radius: 12px; /* Rounded corners */
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1); /* Softer, deeper shadow */
+            border: 1px solid #e0e0e0; /* Subtle border */
         }
+
+        h2 {
+            font-weight: 600;
+            color: #007bff;
+            margin-top: 0;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eeeeee;
+        }
+
+        /* Chessboard Specific */
         #boardContainer { 
             width: 400px; 
             max-width: 100%; 
         }
-        #controls { margin-top: 20px; }
-        #moveInput { padding: 10px; font-size: 16px; width: 120px; border: 1px solid #ccc; border-radius: 4px; }
+
+        /*
+         * INPUTS AND BUTTONS
+         */
+        #controls { margin-top: 25px; }
+        
+        #moveInput { 
+            padding: 12px; /* Larger padding */
+            font-size: 16px; 
+            width: 150px; 
+            border: 1px solid #ced4da; 
+            border-radius: 8px; /* More rounded */
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        #moveInput:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+            outline: none;
+        }
+
         button { 
-            padding: 10px 15px; 
+            padding: 12px 20px; 
             font-size: 16px; 
             cursor: pointer;
-            background-color: #007bff;
+            background-color: #28a745; /* Green for action buttons */
             color: white;
             border: none;
-            border-radius: 4px;
-            transition: background-color 0.2s;
+            border-radius: 8px;
+            transition: background-color 0.2s, transform 0.1s;
         }
-        button:hover { background-color: #0056b3; }
+        button:hover { 
+            background-color: #218838; 
+            transform: translateY(-1px); /* Little lift effect */
+        }
+
+        #controls button {
+            background-color: #dc3545; /* Red for reset action */
+        }
+        #controls button:hover {
+            background-color: #c82333;
+        }
+
+        /*
+         * STATUS AND HISTORY
+         */
+        #turnIndicator { 
+            margin-top: 0; 
+            padding-bottom: 15px; 
+            border-bottom: 2px solid #007bff; /* Highlight the turn */
+            font-weight: 700;
+            color: #333;
+        }
+        
+        .message { 
+            color: #dc3545; 
+            font-weight: 600; 
+            margin-top: 15px; 
+            font-size: 0.9em;
+        }
+
+        h3 {
+            margin-top: 25px;
+            color: #555;
+            font-weight: 600;
+        }
+
         #moveHistory { 
-            list-style: decimal; 
-            padding: 0 0 0 20px; 
+            list-style: none; /* Remove default list style */
+            padding: 10px; 
             max-height: 350px; 
             overflow-y: auto; 
-            border: 1px solid #ddd; 
+            border: 1px solid #ced4da; 
             width: 300px; 
             margin-top: 10px; 
-            border-radius: 4px;
+            border-radius: 8px;
+            background-color: #fafafa;
+            counter-reset: move-counter; /* Initialize counter */
         }
         #moveHistory li { 
-            padding: 5px 10px; 
-            border-bottom: 1px dotted #eee; 
+            padding: 8px 10px; 
+            border-bottom: 1px solid #e9ecef; 
             font-size: 15px; 
+            position: relative;
+            margin-left: 30px; /* Space for the custom number */
+        }
+        #moveHistory li:before {
+            counter-increment: move-counter;
+            content: counter(move-counter) ". "; /* Custom list numbers */
+            position: absolute;
+            left: -30px;
+            font-weight: bold;
+            color: #007bff;
         }
         #moveHistory li:last-child { border-bottom: none; }
-        #turnIndicator { margin-top: 0; padding-bottom: 10px; border-bottom: 2px solid #ccc; }
-        .message { color: #dc3545; font-weight: bold; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -129,6 +208,9 @@
             'q': 'queen',
             'k': 'king'
         };
+        
+        // ** NEW CONSTANT FOR AUDIO SPEED **
+        const AUDIO_PLAYBACK_RATE = 1.2;
 
         // ------------------ AUDIO HANDLING ------------------
         
@@ -143,6 +225,9 @@
 
             const path = soundPaths.shift(); // Get the first path and remove it
             const audio = new Audio(path);
+            
+            // ** THE FIX: Speed up the playback **
+            audio.playbackRate = AUDIO_PLAYBACK_RATE;
             
             // Set up listener to play the next sound after the current one finishes
             audio.onended = () => {
@@ -185,7 +270,6 @@
             // Handle special cases
             if (moveResult.captured) {
                 // If a piece was captured, insert an "x" or "takes" audio clip
-                // Assuming you have a 'takes.mp3' or similar for a natural pause/word
                 audioSequence.splice(2, 0, `${baseDir}action/takes.mp3`); 
             }
             if (moveResult.san.includes('#')) {
@@ -213,9 +297,8 @@
                 return null;
             }
             
-            // *** NEW: Speak the move before updating the DB ***
+            // Speak the move before updating the DB
             speakMove(moveResult); 
-            // *************************************************
 
             const playerColor = (game.turn() === 'w') ? 'White' : 'Black'; 
 
@@ -246,8 +329,7 @@
         }
 
         function onDrop (source, target) {
-            // Promotion check: If a pawn is moving to the 8th or 1st rank, append 'q' for Queen promotion.
-            // This is a simple assumption to handle the required input format for chess.js.
+            // Simple pawn promotion fix: assumes Queen promotion
             let moveString = source + target;
             const piece = game.get(source);
 
