@@ -212,6 +212,9 @@
         // ** NEW CONSTANT FOR AUDIO SPEED **
         const AUDIO_PLAYBACK_RATE = 1.2;
 
+        // ** TRACK MOVE COUNT FOR AUDIO SYNC **
+        let lastMoveCount = 0;
+
         // ------------------ AUDIO HANDLING ------------------
         
         /**
@@ -296,9 +299,6 @@
                 statusElement.textContent = `Invalid move: "${moveString}". Check the rules, format (e.g., e2e4), or if it's the wrong turn.`;
                 return null;
             }
-            
-            // Speak the move before updating the DB
-            speakMove(moveResult); 
 
             const playerColor = (game.turn() === 'w') ? 'White' : 'Black'; 
 
@@ -310,11 +310,19 @@
                     console.error("Error updating FEN:", error);
                 });
             
-            movesRef.push({
-                player: playerColor,
-                move: moveResult.san,
-                fen: tempGame.fen(),
-                timestamp: Date.now()
+            // Get current move count to create predictable key
+            movesRef.once('value').then((snapshot) => {
+                const movesData = snapshot.val();
+                const moveCount = movesData ? Object.keys(movesData).length : 0;
+                const moveNumber = moveCount + 1;
+                
+                // Use predictable key format: move_1, move_2, move_3, etc.
+                movesRef.child(`move_${moveNumber}`).set({
+                    player: playerColor,
+                    move: moveResult.san,
+                    fen: tempGame.fen(),
+                    timestamp: Date.now()
+                });
             });
 
             return moveResult.san;
@@ -445,6 +453,31 @@
                 turnIndicator.textContent = `Game Over: Draw.`;
             } else {
                 turnIndicator.textContent = `${turn} to move.`;
+            }
+            
+            // ** NEW: Check if a new move was added and play audio for everyone **
+            if (moves) {
+                const movesArray = Object.values(moves);
+                const currentMoveCount = movesArray.length;
+                
+                if (currentMoveCount > lastMoveCount) {
+                    // Get the latest move
+                    const latestMove = movesArray[movesArray.length - 1];
+                    
+                    // Recreate the move to get full details for audio
+                    const previousFen = movesArray.length > 1 ? 
+                        movesArray[movesArray.length - 2].fen : START_FEN;
+                    const tempGame = new Chess(previousFen);
+                    const moveResult = tempGame.move(latestMove.move);
+                    
+                    if (moveResult) {
+                        speakMove(moveResult);
+                    }
+                }
+                
+                lastMoveCount = currentMoveCount;
+            } else {
+                lastMoveCount = 0;
             }
             
             updateMoveHistory(moves);
