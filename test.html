@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Full Realtime Drag-and-Drop Chess Game with Audio</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; display: flex; gap: 40px; padding: 30px; background-color: #f0f2f5; justify-content: center; }
+        .container { background: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.1); }
+        #boardContainer { width: 400px; }
+        
+        /* Debug Box so you know ESP32 is connected */
+        .debug-box { background: #222; color: #0f0; padding: 10px; margin-bottom: 10px; font-family: monospace; border-radius: 5px; }
+        
+        #moveHistory { max-height: 300px; overflow-y: auto; list-style: none; padding: 0; }
+        #moveHistory li { padding: 5px 10px; border-bottom: 1px solid #eee; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Realtime Chess</h2>
+        <!-- DEBUG BOX: Shows raw data coming from ESP32 -->
+        <div class="debug-box">
+            Hardware Input: <span id="hw-input" style="color: yellow;">Waiting...</span>
+        </div>
+        
+        <div id="boardContainer"></div>
+        <div style="margin-top: 15px;">
+             <button onclick="startNewGame()" style="padding: 10px; background: #dc3545; color: white; border: none; cursor: pointer;">Start New Game (Reset DB)</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2 id="turnIndicator">...</h2>
+        
+        <div>
+            <input type="text" id="moveInput" placeholder="e2e4">
+            <button onclick="recordMoveFromInput()">Submit Move</button>
+            <p id="statusMessage" style="color: red;"></p>
+        </div>
+
+        <h3>Move History</h3>
+        <ul id="moveHistory"></ul>
+    </div>
+
+    <script>
+        // 1. YOUR CONFIGURATION
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7CXPxD3GxvO3Fge6GV-85T_3Wjf840Rw",
+            authDomain: "reattime-dba.firebaseapp.com",
+            databaseURL: "https://reattime-dba-default-rtdb.firebaseio.com",
+            projectId: "reattime-dba",
+            storageBucket: "reattime-dba.firebasestorage.app",
+            messagingSenderId: "526454581643",
+            appId: "1:526454581643:web:a6f8ddeccef69ec42d278e"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        
+        const gameRef = database.ref('chess_game');
+        const fenRef = database.ref('chess_game/fen'); 
+        const movesRef = database.ref('chess_game/moves'); 
+        
+        // THIS IS WHERE THE ESP32 WRITES TO
+        const hardwareInputRef = database.ref('chess_input/moveInput');
+
+        let game = new Chess(); 
+        let board = null;        
+        const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+        // -------------------------------------------------------------
+        //  HARDWARE LISTENER (The Missing Piece)
+        // -------------------------------------------------------------
+        hardwareInputRef.on('value', (snapshot) => {
+            const moveString = snapshot.val();
+            
+            if (moveString && moveString !== "") {
+                // Show it on screen so you know it arrived
+                document.getElementById('hw-input').innerText = moveString;
+                console.log("ESP32 Signal Received:", moveString);
+
+                // 1. Process the move (Calculate rules, History, FEN)
+                const result = processMove(moveString);
+
+                // 2. Clear the input immediately so it's ready for next move
+                hardwareInputRef.set("");
+            }
+        });
+
+        // -------------------------------------------------------------
+        //  CORE LOGIC (Updates Database exactly like you want)
+        // -------------------------------------------------------------
+        function processMove(moveString) {
+            // Remove spaces if they exist (e.g. "e2 e4" -> "e2e4")
+            const cleanMove = moveString.replace(/\s+/g, '');
+            
+            // Try the move in chess engine
+            const moveResult = game.move(cleanMove, { sloppy: true });
+
+            if (moveResult === null) {
+                console.log("Invalid move or Wrong Turn:", cleanMove);
+                return null;
+            }
+
+            // --- THIS SECTION WRITES THE COMPLEX TABLE ENTRY ---
+            const playerColor = (game.turn() === 'w') ? 'Black' : 'White'; // Swapped because turn changed
+
+            // 1. Update FEN
+            fenRef.set(game.fen());
+
+            // 2. Add Detailed History Entry (The Table View)
+            movesRef.once('value').then((snapshot) => {
+                const movesData = snapshot.val();
+                const moveCount = movesData ? Object.keys(movesData).length : 0;
+                const moveNumber = moveCount + 1;
+                
+                movesRef.child(`move_${moveNumber}`).set({
+                    player: playerColor,
+                    move: moveResult.san, // e.g. "Nf3"
+                    fen: game.fen(),
+                    timestamp: Date.now()
+                });
+            });
+
+            board.position(game.fen());
+            updateStatus();
+            return moveResult.san;
+        }
+
+        // --- SYNC BOARD WITH DATABASE ---
+        gameRef.on('value', (snapshot) => {
+            const gameData = snapshot.val();
+            const fen = (gameData && gameData.fen) ? gameData.fen : START_FEN;
+            const moves = (gameData && gameData.moves) ? gameData.moves : null;
+
+            game.load(fen); 
+            board.position(fen); 
+            updateStatus();
+            updateMoveHistory(moves);
+        });
+
+        // --- UI FUNCTIONS ---
+        function updateStatus() {
+            let status = '';
+            let moveColor = (game.turn() === 'w') ? 'White' : 'Black';
+            if (game.in_checkmate()) status = 'Checkmate!';
+            else if (game.in_draw()) status = 'Draw';
+            else status = moveColor + ' to move';
+            document.getElementById('turnIndicator').innerText = status;
+        }
+
+        function updateMoveHistory(movesData) {
+            const list = document.getElementById('moveHistory');
+            list.innerHTML = ''; 
+            if (!movesData) return;
+            Object.values(movesData).forEach(m => {
+                const li = document.createElement('li');
+                li.textContent = `${m.player}: ${m.move}`;
+                list.appendChild(li);
+            });
+            list.scrollTop = list.scrollHeight;
+        }
+
+        function startNewGame() {
+            if(confirm("Start New Game?")) gameRef.set(null);
+        }
+
+        function recordMoveFromInput() {
+            const txt = document.getElementById('moveInput').value;
+            if(txt) processMove(txt);
+            document.getElementById('moveInput').value = "";
+        }
+
+        // --- INIT ---
+        function initBoard() {
+            board = Chessboard('boardContainer', {
+                draggable: true,
+                position: 'start',
+                onDrop: (source, target) => {
+                    processMove(source + target);
+                    return 'snapback';
+                }
+            });
+        }
+
+        $(document).ready(initBoard);
+    </script>
+</body>
+</html>
