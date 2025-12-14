@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Chess - Synced (Starts at 1)</title>
+    <title>Realtime Chess - Synchronized</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
@@ -18,7 +18,6 @@
         #moveInput { padding: 12px; width: 150px; border: 1px solid #ced4da; border-radius: 8px; }
         button { padding: 12px 20px; cursor: pointer; background-color: #28a745; color: white; border: none; border-radius: 8px; }
         button:hover { background-color: #218838; }
-        #controls button { background-color: #dc3545; }
         #moveHistory { max-height: 350px; overflow-y: auto; list-style: none; padding: 0; width: 300px; background: #fafafa; border: 1px solid #ddd; }
         #moveHistory li { padding: 8px 10px; border-bottom: 1px solid #eee; }
     </style>
@@ -28,8 +27,8 @@
     <div class="container">
         <h2>Realtime Chess</h2>
         <div id="boardContainer"></div>
-        <div id="controls" style="margin-top: 20px;">
-            <button onclick="startNewGame()">Start New Game (Clear DB)</button>
+        <div style="margin-top: 20px;">
+            <button onclick="startNewGame()" style="background-color: #dc3545;">Start New Game (Reset DB)</button>
         </div>
     </div>
 
@@ -66,8 +65,7 @@
 
         let game = new Chess();
         let board = null;
-        
-        // --- Game Logic ---
+
         function onDragStart(source, piece) {
             if (game.game_over()) return false;
             if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
@@ -89,40 +87,34 @@
 
         function saveMoveToFirebase(moveString) {
             const moveResult = game.move(moveString, { sloppy: true });
-            
             if (moveResult === null) {
                 document.getElementById('statusMessage').textContent = "Invalid move!";
                 return;
             }
-            game.undo(); // Revert local, wait for DB sync to confirm
+            game.undo(); // Undo locally, let the listener update the board
 
             movesRef.once('value').then(snapshot => {
                 const moves = snapshot.val();
-                
-                // --- INDEX LOGIC: START AT 1 ---
                 let nextIndex = 1;
                 
+                // Calculate next index based on array size
+                // We use Anchor at 0, so length is reliable
                 if (Array.isArray(moves)) {
-                    // If [null, move1, move2], length is 3. Next is 3.
-                    nextIndex = moves.length;
-                    // Fix: If array is empty or just [null]
-                    if (nextIndex === 0) nextIndex = 1;
+                    nextIndex = moves.length; 
                 } else if (moves && typeof moves === 'object') {
-                    // If it's an object, find max key
                     const keys = Object.keys(moves).map(Number).filter(n => !isNaN(n));
                     if (keys.length > 0) nextIndex = Math.max(...keys) + 1;
                 }
 
                 const formattedMove = moveResult.from + moveResult.to; 
-                
-                // Write Data
                 const updateData = {};
-                // Path: chess_game/moves/1
+                
+                // Save to moves/1, moves/2...
                 updateData[`chess_game/moves/${nextIndex}`] = {
                     move: formattedMove,
                     player: moveResult.color === 'w' ? 'White' : 'Black',
-                    fen: moveResult.after, // Keep Valid FEN for web
-                    source: "WEB_CLIENT",  // <--- SOURCE TAG
+                    fen: moveResult.after,
+                    source: "WEB_CLIENT",
                     timestamp: Date.now()
                 };
                 updateData['chess_game/fen'] = moveResult.after;
@@ -134,24 +126,25 @@
         }
 
         function startNewGame() {
-            if(confirm("Start new game? This clears the database.")) {
+            if(confirm("Start new game? This resets the board.")) {
+                // Initialize with Anchor at 0
                 database.ref('chess_game').set({
                     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-                    moves: [null] // Initialize with a null at 0 to force 1-based indexing
+                    moves: {
+                        0: { status: "Game Started", timestamp: Date.now() }
+                    }
                 });
             }
         }
 
         function updateUI(fen, moves) {
-            // Attempt to load FEN
-            // If FEN is a placeholder from ESP32, we must recalculate it from moves
+            // Re-sync game logic
             if (fen && (fen.includes("updated_by") || fen.includes("esp_32"))) {
-                // Recalculate from start
                 game.reset();
                 if (moves) {
                     const keys = Object.keys(moves).sort((a,b) => Number(a)-Number(b));
                     keys.forEach(k => {
-                        if (k === '0' || !moves[k]) return;
+                        if (k == 0 || !moves[k].move) return;
                         game.move(moves[k].move, {sloppy: true});
                     });
                 }
@@ -170,19 +163,17 @@
             if (moves) {
                 const moveKeys = Object.keys(moves).sort((a,b) => Number(a)-Number(b));
                 moveKeys.forEach(key => {
-                    // SKIP KEY 0
-                    if (key === '0' || !moves[key]) return;
+                    if (key == 0 || !moves[key].move) return; // Skip Anchor
 
                     const m = moves[key];
                     let li = document.createElement('li');
-                    // Display: 1. White (WEB_CLIENT): e2e4
-                    li.innerHTML = `<b>${key}.</b> ${m.player} <span style="font-size:0.8em; color:gray">(${m.source || 'unknown'})</span>: ${m.move}`;
+                    li.innerHTML = `<b>${key}.</b> ${m.player} <small>(${m.source})</small>: ${m.move}`;
                     historyEl.appendChild(li);
                 });
             }
         }
 
-        // Listener
+        // --- LISTENER ---
         gameRef.on('value', (snapshot) => {
             const data = snapshot.val();
             if (data) {
