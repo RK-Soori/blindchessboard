@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Realtime Chess (Auto-Sync)</title>
+    <title>Chess - Synced (Starts at 1)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
@@ -29,7 +29,7 @@
         <h2>Realtime Chess</h2>
         <div id="boardContainer"></div>
         <div id="controls" style="margin-top: 20px;">
-            <button onclick="startNewGame()">Start New Game (Reset DB)</button>
+            <button onclick="startNewGame()">Start New Game (Clear DB)</button>
         </div>
     </div>
 
@@ -66,37 +66,8 @@
 
         let game = new Chess();
         let board = null;
-        let lastMoveCount = 0; 
-
-        // Audio Logic
-        const pieceNames = { 'p': 'pawn', 'n': 'knight', 'b': 'bishop', 'r': 'rook', 'q': 'queen', 'k': 'king' };
         
-        function playNextSound(soundPaths) {
-            if (soundPaths.length === 0) return;
-            const path = soundPaths.shift();
-            const audio = new Audio(path);
-            audio.playbackRate = 1.2;
-            audio.onended = () => playNextSound(soundPaths);
-            audio.play().catch(e => playNextSound(soundPaths));
-        }
-
-        function speakMove(moveResult) {
-            const baseDir = 'Chess_board_audio/';
-            const piece = pieceNames[moveResult.piece];
-            const color = (moveResult.color === 'w') ? 'white' : 'black';
-            const dest = moveResult.to;
-            let seq = [
-                `${baseDir}color/${color}.mp3`,
-                `${baseDir}piece/${piece}.mp3`,
-                `${baseDir}position/letter/${dest[0]}.mp3`,
-                `${baseDir}position/number/${dest[1]}.mp3`
-            ];
-            if (moveResult.captured) seq.splice(2, 0, `${baseDir}action/takes.mp3`);
-            if (moveResult.san.includes('#')) seq.push(`${baseDir}action/checkmate.mp3`);
-            else if (moveResult.san.includes('+')) seq.push(`${baseDir}action/check.mp3`);
-            playNextSound(seq);
-        }
-
+        // --- Game Logic ---
         function onDragStart(source, piece) {
             if (game.game_over()) return false;
             if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
@@ -118,55 +89,77 @@
 
         function saveMoveToFirebase(moveString) {
             const moveResult = game.move(moveString, { sloppy: true });
+            
             if (moveResult === null) {
                 document.getElementById('statusMessage').textContent = "Invalid move!";
                 return;
             }
-            game.undo(); // Undo locally, wait for DB sync
+            game.undo(); // Revert local, wait for DB sync to confirm
 
             movesRef.once('value').then(snapshot => {
-                const moves = snapshot.val() || {};
+                const moves = snapshot.val();
                 
-                // LOGIC: Find next available index (1, 2, 3...)
+                // --- INDEX LOGIC: START AT 1 ---
                 let nextIndex = 1;
-                if (moves && typeof moves === 'object') {
-                    // Filter numeric keys and find max
+                
+                if (Array.isArray(moves)) {
+                    // If [null, move1, move2], length is 3. Next is 3.
+                    nextIndex = moves.length;
+                    // Fix: If array is empty or just [null]
+                    if (nextIndex === 0) nextIndex = 1;
+                } else if (moves && typeof moves === 'object') {
+                    // If it's an object, find max key
                     const keys = Object.keys(moves).map(Number).filter(n => !isNaN(n));
                     if (keys.length > 0) nextIndex = Math.max(...keys) + 1;
-                } else if (Array.isArray(moves)) {
-                    nextIndex = moves.length; // Array length is usually the next index
                 }
 
                 const formattedMove = moveResult.from + moveResult.to; 
                 
-                // Write to database
-                const updates = {};
-                updates[`chess_game/moves/${nextIndex}`] = {
+                // Write Data
+                const updateData = {};
+                // Path: chess_game/moves/1
+                updateData[`chess_game/moves/${nextIndex}`] = {
                     move: formattedMove,
                     player: moveResult.color === 'w' ? 'White' : 'Black',
-                    fen: moveResult.after,
+                    fen: moveResult.after, // Keep Valid FEN for web
+                    source: "WEB_CLIENT",  // <--- SOURCE TAG
                     timestamp: Date.now()
                 };
-                updates['chess_game/fen'] = moveResult.after;
+                updateData['chess_game/fen'] = moveResult.after;
 
-                database.ref().update(updates).catch(console.error);
+                database.ref().update(updateData).catch(console.error);
                 document.getElementById('moveInput').value = '';
                 document.getElementById('statusMessage').textContent = '';
             });
         }
 
         function startNewGame() {
-            if(confirm("Start new game?")) {
+            if(confirm("Start new game? This clears the database.")) {
                 database.ref('chess_game').set({
                     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-                    moves: null 
+                    moves: [null] // Initialize with a null at 0 to force 1-based indexing
                 });
             }
         }
 
         function updateUI(fen, moves) {
-            game.load(fen);
-            board.position(fen);
+            // Attempt to load FEN
+            // If FEN is a placeholder from ESP32, we must recalculate it from moves
+            if (fen && (fen.includes("updated_by") || fen.includes("esp_32"))) {
+                // Recalculate from start
+                game.reset();
+                if (moves) {
+                    const keys = Object.keys(moves).sort((a,b) => Number(a)-Number(b));
+                    keys.forEach(k => {
+                        if (k === '0' || !moves[k]) return;
+                        game.move(moves[k].move, {sloppy: true});
+                    });
+                }
+            } else {
+                game.load(fen);
+            }
+
+            board.position(game.fen());
             
             const turn = game.turn() === 'w' ? "White" : "Black";
             document.getElementById('turnIndicator').textContent = `${turn} to Move`;
@@ -175,36 +168,21 @@
             historyEl.innerHTML = '';
             
             if (moves) {
-                // Ensure we handle both Array and Object responses from Firebase
                 const moveKeys = Object.keys(moves).sort((a,b) => Number(a)-Number(b));
-                let validMoveCount = 0;
-
                 moveKeys.forEach(key => {
-                    if (key === '0' || !moves[key]) return; // Skip 0 or nulls
+                    // SKIP KEY 0
+                    if (key === '0' || !moves[key]) return;
 
                     const m = moves[key];
                     let li = document.createElement('li');
-                    li.innerHTML = `<b>${key}.</b> ${m.player}: ${m.move}`;
+                    // Display: 1. White (WEB_CLIENT): e2e4
+                    li.innerHTML = `<b>${key}.</b> ${m.player} <span style="font-size:0.8em; color:gray">(${m.source || 'unknown'})</span>: ${m.move}`;
                     historyEl.appendChild(li);
-                    validMoveCount++;
                 });
-
-                // Audio Trigger
-                if (validMoveCount > lastMoveCount) {
-                    // Play audio logic (simplified for reliability)
-                    let tempGame = new Chess();
-                    let moveRes = null;
-                    moveKeys.forEach(k => {
-                        if(k !== '0' && moves[k]) moveRes = tempGame.move(moves[k].move, {sloppy:true});
-                    });
-                    if(moveRes) speakMove(moveRes);
-                    lastMoveCount = validMoveCount;
-                }
-            } else {
-                lastMoveCount = 0;
             }
         }
 
+        // Listener
         gameRef.on('value', (snapshot) => {
             const data = snapshot.val();
             if (data) {
