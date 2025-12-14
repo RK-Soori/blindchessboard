@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Full Realtime Drag-and-Drop Chess Game with Audio</title>
+    <title>Interconnected Realtime Chess (1-Based Index)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
@@ -12,480 +12,233 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 
     <style>
-        /*
-         * GLOBAL STYLES
-         */
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Modern Font Stack */
-            display: flex; 
-            justify-content: center; 
-            align-items: flex-start; 
-            gap: 40px; /* Increased spacing */
-            padding: 30px; 
-            background-color: #f0f2f5; /* Light, soft background */
-            color: #333; /* Darker text */
-        }
-        
-        /* Main Content Boxes */
-        .container { 
-            display: flex; 
-            flex-direction: column; 
-            background: #ffffff;
-            padding: 30px; /* Increased padding */
-            border-radius: 12px; /* Rounded corners */
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1); /* Softer, deeper shadow */
-            border: 1px solid #e0e0e0; /* Subtle border */
-        }
-
-        h2 {
-            font-weight: 600;
-            color: #007bff;
-            margin-top: 0;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #eeeeee;
-        }
-
-        /* Chessboard Specific */
-        #boardContainer { 
-            width: 400px; 
-            max-width: 100%; 
-        }
-
-        /*
-         * INPUTS AND BUTTONS
-         */
-        #controls { margin-top: 25px; }
-        
-        #moveInput { 
-            padding: 12px; /* Larger padding */
-            font-size: 16px; 
-            width: 150px; 
-            border: 1px solid #ced4da; 
-            border-radius: 8px; /* More rounded */
-            transition: border-color 0.2s, box-shadow 0.2s;
-        }
-        #moveInput:focus {
-            border-color: #007bff;
-            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
-            outline: none;
-        }
-
-        button { 
-            padding: 12px 20px; 
-            font-size: 16px; 
-            cursor: pointer;
-            background-color: #28a745; /* Green for action buttons */
-            color: white;
-            border: none;
-            border-radius: 8px;
-            transition: background-color 0.2s, transform 0.1s;
-        }
-        button:hover { 
-            background-color: #218838; 
-            transform: translateY(-1px); /* Little lift effect */
-        }
-
-        #controls button {
-            background-color: #dc3545; /* Red for reset action */
-        }
-        #controls button:hover {
-            background-color: #c82333;
-        }
-
-        /*
-         * STATUS AND HISTORY
-         */
-        #turnIndicator { 
-            margin-top: 0; 
-            padding-bottom: 15px; 
-            border-bottom: 2px solid #007bff; /* Highlight the turn */
-            font-weight: 700;
-            color: #333;
-        }
-        
-        .message { 
-            color: #dc3545; 
-            font-weight: 600; 
-            margin-top: 15px; 
-            font-size: 0.9em;
-        }
-
-        h3 {
-            margin-top: 25px;
-            color: #555;
-            font-weight: 600;
-        }
-
-        #moveHistory { 
-            list-style: none; /* Remove default list style */
-            padding: 10px; 
-            max-height: 350px; 
-            overflow-y: auto; 
-            border: 1px solid #ced4da; 
-            width: 300px; 
-            margin-top: 10px; 
-            border-radius: 8px;
-            background-color: #fafafa;
-            counter-reset: move-counter; /* Initialize counter */
-        }
-        #moveHistory li { 
-            padding: 8px 10px; 
-            border-bottom: 1px solid #e9ecef; 
-            font-size: 15px; 
-            position: relative;
-            margin-left: 30px; /* Space for the custom number */
-        }
-        #moveHistory li:before {
-            counter-increment: move-counter;
-            content: counter(move-counter) ". "; /* Custom list numbers */
-            position: absolute;
-            left: -30px;
-            font-weight: bold;
-            color: #007bff;
-        }
-        #moveHistory li:last-child { border-bottom: none; }
+        body { font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; gap: 40px; padding: 30px; background-color: #f0f2f5; }
+        .container { background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.1); border: 1px solid #e0e0e0; }
+        #boardContainer { width: 400px; }
+        #moveInput { padding: 12px; width: 150px; border: 1px solid #ced4da; border-radius: 8px; }
+        button { padding: 12px 20px; cursor: pointer; background-color: #28a745; color: white; border: none; border-radius: 8px; }
+        button:hover { background-color: #218838; }
+        #controls button { background-color: #dc3545; }
+        #moveHistory { max-height: 350px; overflow-y: auto; list-style: none; padding: 0; width: 300px; background: #fafafa; border: 1px solid #ddd; }
+        #moveHistory li { padding: 8px 10px; border-bottom: 1px solid #eee; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <h2>Realtime Chess</h2>
-        <div id="boardContainer">
-            </div>
-
-        <div id="controls">
+        <div id="boardContainer"></div>
+        <div id="controls" style="margin-top: 20px;">
             <button onclick="startNewGame()">Start New Game (Reset DB)</button>
         </div>
     </div>
 
     <div class="container">
-        <h2 id="turnIndicator">...</h2>
-
+        <h2 id="turnIndicator">Loading...</h2>
         <div>
-            <input type="text" id="moveInput" placeholder="e2e4 / g1f3">
+            <input type="text" id="moveInput" placeholder="e2e4">
             <button onclick="recordMoveFromInput()">Submit Move</button>
-            <p id="statusMessage" class="message"></p>
+            <p id="statusMessage" style="color:red; height: 20px;"></p>
         </div>
-        
-        <h3>Move History:</h3>
-        <ol id="moveHistory"></ol>
+        <h3>Move History</h3>
+        <ul id="moveHistory"></ul>
     </div>
 
     <script>
         // *****************************************************************
-        // STEP 1: REPLACE THIS WITH YOUR ACTUAL CONFIGURATION
+        // CONFIGURATION
         // *****************************************************************
         const firebaseConfig = {
-  apiKey: "AIzaSyA7CXPxD3GxvO3Fge6GV-85T_3Wjf840Rw",
-  authDomain: "reattime-dba.firebaseapp.com",
-  databaseURL: "https://reattime-dba-default-rtdb.firebaseio.com",
-  projectId: "reattime-dba",
-  storageBucket: "reattime-dba.firebasestorage.app",
-  messagingSenderId: "526454581643",
-  appId: "1:526454581643:web:a6f8ddeccef69ec42d278e",
-  measurementId: "G-1NCZKB5L3B"
-};
+            apiKey: "AIzaSyA7CXPxD3GxvO3Fge6GV-85T_3Wjf840Rw",
+            authDomain: "reattime-dba.firebaseapp.com",
+            databaseURL: "https://reattime-dba-default-rtdb.firebaseio.com",
+            projectId: "reattime-dba",
+            storageBucket: "reattime-dba.firebasestorage.app",
+            messagingSenderId: "526454581643",
+            appId: "1:526454581643:web:a6f8ddeccef69ec42d278e"
+        };
         // *****************************************************************
 
-        // ------------------ GLOBAL GAME & FIREBASE VARIABLES ------------------
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
-        
         const gameRef = database.ref('chess_game');
-        const fenRef = database.ref('chess_game/fen'); 
-        const movesRef = database.ref('chess_game/moves'); 
+        const movesRef = database.ref('chess_game/moves');
 
-        let game = new Chess(); 
-        let board = null;       
-        const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-        
-        // Map chess.js piece letters to full names for audio
-        const pieceNames = {
-            'p': 'pawn',
-            'n': 'knight',
-            'b': 'bishop',
-            'r': 'rook',
-            'q': 'queen',
-            'k': 'king'
-        };
-        
-        // ** NEW CONSTANT FOR AUDIO SPEED **
-        const AUDIO_PLAYBACK_RATE = 1.2;
+        let game = new Chess();
+        let board = null;
+        let lastMoveCount = 0; 
 
-        // ** TRACK MOVE COUNT FOR AUDIO SYNC **
-        let lastMoveCount = 0;
-
-        // ------------------ AUDIO HANDLING ------------------
+        // Audio Logic
+        const pieceNames = { 'p': 'pawn', 'n': 'knight', 'b': 'bishop', 'r': 'rook', 'q': 'queen', 'k': 'king' };
         
-        /**
-         * Plays the next sound in a sequence recursively.
-         * @param {string[]} soundPaths - Array of relative paths to MP3 files.
-         */
         function playNextSound(soundPaths) {
-            if (soundPaths.length === 0) {
-                return;
-            }
-
-            const path = soundPaths.shift(); // Get the first path and remove it
+            if (soundPaths.length === 0) return;
+            const path = soundPaths.shift();
             const audio = new Audio(path);
-            
-            // ** THE FIX: Speed up the playback **
-            audio.playbackRate = AUDIO_PLAYBACK_RATE;
-            
-            // Set up listener to play the next sound after the current one finishes
-            audio.onended = () => {
-                playNextSound(soundPaths);
-            };
-
-            // Start playing
-            audio.play().catch(error => {
-                console.warn(`Audio error: Could not play ${path}. Check file path/existence or browser autoplay restrictions.`, error);
-                // Continue to the next sound even if one fails
-                playNextSound(soundPaths);
-            });
+            audio.playbackRate = 1.2;
+            audio.onended = () => playNextSound(soundPaths);
+            audio.play().catch(e => playNextSound(soundPaths));
         }
-        
-        /**
-         * Generates and plays the audio sequence for a completed move.
-         * @param {object} moveResult - The result object from chess.js move().
-         */
+
         function speakMove(moveResult) {
-            // Determine piece name, color, and destination square
-            const pieceCode = moveResult.piece; // p, n, b, r, q, k
-            const piece = pieceNames[pieceCode];
-            const color = (moveResult.color === 'w') ? 'white' : 'black';
-            const destSquare = moveResult.to; // e.g., 'e4'
-            const letter = destSquare[0];
-            const number = destSquare[1];
-            
-            // Base directory for audio files
             const baseDir = 'Chess_board_audio/';
-            
-            // Construct the sequence of file paths
-            const audioSequence = [
+            const piece = pieceNames[moveResult.piece];
+            const color = (moveResult.color === 'w') ? 'white' : 'black';
+            const dest = moveResult.to;
+            let seq = [
                 `${baseDir}color/${color}.mp3`,
                 `${baseDir}piece/${piece}.mp3`,
-                // Optionally add a transition or "to" word here if desired
-                `${baseDir}position/letter/${letter}.mp3`,
-                `${baseDir}position/number/${number}.mp3`
+                `${baseDir}position/letter/${dest[0]}.mp3`,
+                `${baseDir}position/number/${dest[1]}.mp3`
             ];
-            
-            // Handle special cases
-            if (moveResult.captured) {
-                // If a piece was captured, insert an "x" or "takes" audio clip
-                audioSequence.splice(2, 0, `${baseDir}action/takes.mp3`); 
-            }
-            if (moveResult.san.includes('#')) {
-                audioSequence.push(`${baseDir}action/checkmate.mp3`);
-            } else if (moveResult.san.includes('+')) {
-                 audioSequence.push(`${baseDir}action/check.mp3`);
-            }
-
-            // Play the constructed sequence
-            playNextSound(audioSequence);
+            if (moveResult.captured) seq.splice(2, 0, `${baseDir}action/takes.mp3`);
+            if (moveResult.san.includes('#')) seq.push(`${baseDir}action/checkmate.mp3`);
+            else if (moveResult.san.includes('+')) seq.push(`${baseDir}action/check.mp3`);
+            playNextSound(seq);
         }
 
-        // ------------------ CORE MOVE PROCESSING FUNCTION ------------------
-        
-        function processMove(moveString) {
-            const statusElement = document.getElementById('statusMessage');
-            statusElement.textContent = ''; 
+        function onDragStart(source, piece) {
+            if (game.game_over()) return false;
+            if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
+                (game.turn() === 'b' && piece.search(/^w/) !== -1)) return false;
+        }
 
+        function onDrop(source, target) {
+            let moveCfg = { from: source, to: target, promotion: 'q' };
             let tempGame = new Chess(game.fen());
-            
-            const moveResult = tempGame.move(moveString, { sloppy: true });
-
-            if (moveResult === null) {
-                statusElement.textContent = `Invalid move: "${moveString}". Check the rules, format (e.g., e2e4), or if it's the wrong turn.`;
-                return null;
-            }
-
-            const playerColor = (game.turn() === 'w') ? 'White' : 'Black'; 
-
-            fenRef.set(tempGame.fen())
-                .then(() => {
-                    statusElement.textContent = `Move recorded: ${moveResult.san}`;
-                })
-                .catch((error) => {
-                    console.error("Error updating FEN:", error);
-                });
-            
-            // Get current move count to create predictable key
-            movesRef.once('value').then((snapshot) => {
-                const movesData = snapshot.val();
-                const moveCount = movesData ? Object.keys(movesData).length : 0;
-                const moveNumber = moveCount + 1;
-                
-                // Use predictable key format: move_1, move_2, move_3, etc.
-                movesRef.child(`move_${moveNumber}`).set({
-                    player: playerColor,
-                    move: moveResult.san,
-                    fen: tempGame.fen(),
-                    timestamp: Date.now()
-                });
-            });
-
-            return moveResult.san;
+            let move = tempGame.move(moveCfg);
+            if (move === null) return 'snapback';
+            saveMoveToFirebase(source + target); 
         }
-
-        // ------------------ DRAG-AND-DROP HANDLERS ------------------
-        
-        function onDragStart (source, piece, position, orientation) {
-            if (piece.search(game.turn() === 'w' ? /^b/ : /^w/) !== -1) {
-                return false
-            }
-        }
-
-        function onDrop (source, target) {
-            // Simple pawn promotion fix: assumes Queen promotion
-            let moveString = source + target;
-            const piece = game.get(source);
-
-            if (piece && piece.type === 'p' && (target[1] === '8' || target[1] === '1')) {
-                moveString += 'q'; 
-            }
-
-            const result = processMove(moveString);
-
-            if (result === null) {
-                return 'snapback';
-            }
-        }
-
-        function onSnapEnd () {
-            // Board sync handled by Firebase listener
-        }
-
-
-        // ------------------ MANUAL INPUT HANDLER ------------------
 
         function recordMoveFromInput() {
-            const moveText = document.getElementById('moveInput').value.trim();
-            if (moveText === "") return;
-
-            const result = processMove(moveText);
-            
-            if (result !== null) {
-                document.getElementById('moveInput').value = ''; 
-            }
+            const m = document.getElementById('moveInput').value.trim();
+            if(m) saveMoveToFirebase(m);
         }
 
-        // ------------------ FIREBASE CONTROL FUNCTIONS ------------------
+        function saveMoveToFirebase(moveString) {
+            const moveResult = game.move(moveString, { sloppy: true });
+            
+            if (moveResult === null) {
+                document.getElementById('statusMessage').textContent = "Invalid move!";
+                return;
+            }
+            game.undo(); // Undo locally, wait for DB sync
+
+            movesRef.once('value').then(snapshot => {
+                const moves = snapshot.val() || {};
+                
+                // LOGIC CHANGE: Start at 1
+                // We find the highest key number and add 1
+                let nextIndex = 1;
+                const keys = Object.keys(moves).map(Number).filter(n => !isNaN(n));
+                if (keys.length > 0) {
+                    nextIndex = Math.max(...keys) + 1;
+                }
+
+                const formattedMove = moveResult.from + moveResult.to; 
+                const updateData = {};
+                
+                // Write to moves/1, moves/2 etc.
+                updateData[`chess_game/moves/${nextIndex}`] = {
+                    move: formattedMove,
+                    player: moveResult.color === 'w' ? 'White' : 'Black',
+                    fen: moveResult.after,
+                    timestamp: Date.now()
+                };
+                updateData['chess_game/fen'] = moveResult.after;
+
+                database.ref().update(updateData).catch(console.error);
+                document.getElementById('moveInput').value = '';
+                document.getElementById('statusMessage').textContent = '';
+            });
+        }
 
         function startNewGame() {
-            if (confirm("Are you sure you want to start a new game? This will wipe ALL current game data.")) {
-                gameRef.set(null)
-                    .then(() => {
-                        console.log("Game successfully reset in Firebase.");
-                        document.getElementById('statusMessage').textContent = "New game started! White to move.";
-                    })
-                    .catch((error) => {
-                        console.error("Error resetting game:", error);
-                    });
+            if(confirm("Start new game?")) {
+                database.ref('chess_game').set({
+                    fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+                    moves: null 
+                });
             }
         }
 
-        function updateMoveHistory(movesData) {
-            const historyElement = document.getElementById('moveHistory');
-            historyElement.innerHTML = ''; 
-            let fullMoveNumber = 0; 
+        function updateUI(fen, moves) {
+            game.load(fen);
+            board.position(fen);
             
-            if (!movesData) return;
+            const turn = game.turn() === 'w' ? "White" : "Black";
+            document.getElementById('turnIndicator').textContent = `${turn} to Move`;
             
-            Object.values(movesData).forEach(moveData => {
-                if (moveData.player === 'White') {
-                    fullMoveNumber++;
-                    const newListItem = document.createElement('li');
-                    newListItem.textContent = `${moveData.move}`;
-                    newListItem.classList.add('white-move');
-                    historyElement.appendChild(newListItem);
-                } else {
-                    if (historyElement.lastChild) {
-                        historyElement.lastChild.textContent += ` ${moveData.move}`;
-                    } else {
-                        const newListItem = document.createElement('li');
-                        newListItem.textContent = `... ${moveData.move}`;
-                        historyElement.appendChild(newListItem);
-                    }
-                }
-            });
+            const historyEl = document.getElementById('moveHistory');
+            historyEl.innerHTML = '';
             
-            historyElement.scrollTop = historyElement.scrollHeight;
-        }
-
-
-        // ------------------ INITIALIZATION AND SYNCHRONIZATION ------------------
-        
-        function initBoard() {
-            const PIECE_THEME_PATH = 'img/pieces/{piece}.png';
-            
-            const cfg = {
-                draggable: true,
-                position: START_FEN,
-                onDragStart: onDragStart,
-                onDrop: onDrop,
-                onSnapEnd: onSnapEnd,
-                dropOffBoard: 'snapback',
-                pieceTheme: PIECE_THEME_PATH 
-            };
-            board = Chessboard('boardContainer', cfg);
-        }
-        
-        /**
-         * Main listener: Synchronizes the board state (FEN) and game logic for ALL clients.
-         */
-        gameRef.on('value', (snapshot) => {
-            const gameData = snapshot.val();
-            
-            const fen = (gameData && gameData.fen) ? gameData.fen : START_FEN;
-            const moves = (gameData && gameData.moves) ? gameData.moves : null;
-
-            game.load(fen); 
-
-            board.position(fen, false); 
-
-            const turn = (game.turn() === 'w') ? 'White' : 'Black';
-            const turnIndicator = document.getElementById('turnIndicator');
-            
-            if (game.in_checkmate()) {
-                turnIndicator.textContent = `Checkmate! ${turn === 'White' ? 'Black' : 'White'} wins!`;
-            } else if (game.in_draw() || game.game_over()) {
-                turnIndicator.textContent = `Game Over: Draw.`;
-            } else {
-                turnIndicator.textContent = `${turn} to move.`;
-            }
-            
-            // ** NEW: Check if a new move was added and play audio for everyone **
             if (moves) {
-                const movesArray = Object.values(moves);
-                const currentMoveCount = movesArray.length;
-                
-                if (currentMoveCount > lastMoveCount) {
-                    // Get the latest move
-                    const latestMove = movesArray[movesArray.length - 1];
+                // Handle sparse array (index 0 might be null or empty)
+                const moveKeys = Object.keys(moves).sort((a,b) => a-b);
+                let validMoveCount = 0;
+
+                moveKeys.forEach(key => {
+                    // Skip index 0 if it exists but is null (Firebase array behavior)
+                    if (key == '0' || !moves[key]) return;
+
+                    const m = moves[key];
+                    let li = document.createElement('li');
+                    // key is 1, 2, 3...
+                    li.innerHTML = `<b>${key}.</b> ${m.player}: ${m.move}`;
+                    historyEl.appendChild(li);
+                    validMoveCount++;
+                });
+
+                // Audio Trigger
+                if (validMoveCount > lastMoveCount) {
+                    const lastKey = moveKeys[moveKeys.length - 1];
+                    const lastMoveObj = moves[lastKey];
                     
-                    // Recreate the move to get full details for audio
-                    const previousFen = movesArray.length > 1 ? 
-                        movesArray[movesArray.length - 2].fen : START_FEN;
-                    const tempGame = new Chess(previousFen);
-                    const moveResult = tempGame.move(latestMove.move);
+                    let tempGame = new Chess();
+                    // Replay to get audio details
+                    moveKeys.forEach(k => {
+                        if(k !== '0' && moves[k]) tempGame.move(moves[k].move, {sloppy:true});
+                    });
                     
-                    if (moveResult) {
-                        speakMove(moveResult);
-                    }
+                    // The last move we just made
+                    // (Actually the loop above played it, so we can't get the result object easily unless we step back)
+                    // Simplified: just speak the last move from the loop
+                    // But we need the Move Result Object.
+                    
+                    // Proper Replay:
+                    let audioGame = new Chess();
+                    let moveRes = null;
+                    moveKeys.forEach(k => {
+                        if(k !== '0' && moves[k]) moveRes = audioGame.move(moves[k].move, {sloppy:true});
+                    });
+
+                    if(moveRes) speakMove(moveRes);
+                    
+                    lastMoveCount = validMoveCount;
                 }
-                
-                lastMoveCount = currentMoveCount;
             } else {
                 lastMoveCount = 0;
             }
-            
-            updateMoveHistory(moves);
+        }
+
+        gameRef.on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                const fen = data.fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+                const moves = data.moves || null;
+                updateUI(fen, moves);
+            }
         });
 
-        // ------------------ Run Initialization ------------------
         $(document).ready(function() {
-            initBoard();
+            board = Chessboard('boardContainer', {
+                draggable: true,
+                position: 'start',
+                onDragStart: onDragStart,
+                onDrop: onDrop,
+                pieceTheme: 'img/pieces/{piece}.png'
+            });
         });
     </script>
 </body>
