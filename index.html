@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Interconnected Realtime Chess (1-Based Index)</title>
+    <title>Realtime Chess (Auto-Sync)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
@@ -118,7 +118,6 @@
 
         function saveMoveToFirebase(moveString) {
             const moveResult = game.move(moveString, { sloppy: true });
-            
             if (moveResult === null) {
                 document.getElementById('statusMessage').textContent = "Invalid move!";
                 return;
@@ -128,27 +127,29 @@
             movesRef.once('value').then(snapshot => {
                 const moves = snapshot.val() || {};
                 
-                // LOGIC CHANGE: Start at 1
-                // We find the highest key number and add 1
+                // LOGIC: Find next available index (1, 2, 3...)
                 let nextIndex = 1;
-                const keys = Object.keys(moves).map(Number).filter(n => !isNaN(n));
-                if (keys.length > 0) {
-                    nextIndex = Math.max(...keys) + 1;
+                if (moves && typeof moves === 'object') {
+                    // Filter numeric keys and find max
+                    const keys = Object.keys(moves).map(Number).filter(n => !isNaN(n));
+                    if (keys.length > 0) nextIndex = Math.max(...keys) + 1;
+                } else if (Array.isArray(moves)) {
+                    nextIndex = moves.length; // Array length is usually the next index
                 }
 
                 const formattedMove = moveResult.from + moveResult.to; 
-                const updateData = {};
                 
-                // Write to moves/1, moves/2 etc.
-                updateData[`chess_game/moves/${nextIndex}`] = {
+                // Write to database
+                const updates = {};
+                updates[`chess_game/moves/${nextIndex}`] = {
                     move: formattedMove,
                     player: moveResult.color === 'w' ? 'White' : 'Black',
                     fen: moveResult.after,
                     timestamp: Date.now()
                 };
-                updateData['chess_game/fen'] = moveResult.after;
+                updates['chess_game/fen'] = moveResult.after;
 
-                database.ref().update(updateData).catch(console.error);
+                database.ref().update(updates).catch(console.error);
                 document.getElementById('moveInput').value = '';
                 document.getElementById('statusMessage').textContent = '';
             });
@@ -174,17 +175,15 @@
             historyEl.innerHTML = '';
             
             if (moves) {
-                // Handle sparse array (index 0 might be null or empty)
-                const moveKeys = Object.keys(moves).sort((a,b) => a-b);
+                // Ensure we handle both Array and Object responses from Firebase
+                const moveKeys = Object.keys(moves).sort((a,b) => Number(a)-Number(b));
                 let validMoveCount = 0;
 
                 moveKeys.forEach(key => {
-                    // Skip index 0 if it exists but is null (Firebase array behavior)
-                    if (key == '0' || !moves[key]) return;
+                    if (key === '0' || !moves[key]) return; // Skip 0 or nulls
 
                     const m = moves[key];
                     let li = document.createElement('li');
-                    // key is 1, 2, 3...
                     li.innerHTML = `<b>${key}.</b> ${m.player}: ${m.move}`;
                     historyEl.appendChild(li);
                     validMoveCount++;
@@ -192,29 +191,13 @@
 
                 // Audio Trigger
                 if (validMoveCount > lastMoveCount) {
-                    const lastKey = moveKeys[moveKeys.length - 1];
-                    const lastMoveObj = moves[lastKey];
-                    
+                    // Play audio logic (simplified for reliability)
                     let tempGame = new Chess();
-                    // Replay to get audio details
-                    moveKeys.forEach(k => {
-                        if(k !== '0' && moves[k]) tempGame.move(moves[k].move, {sloppy:true});
-                    });
-                    
-                    // The last move we just made
-                    // (Actually the loop above played it, so we can't get the result object easily unless we step back)
-                    // Simplified: just speak the last move from the loop
-                    // But we need the Move Result Object.
-                    
-                    // Proper Replay:
-                    let audioGame = new Chess();
                     let moveRes = null;
                     moveKeys.forEach(k => {
-                        if(k !== '0' && moves[k]) moveRes = audioGame.move(moves[k].move, {sloppy:true});
+                        if(k !== '0' && moves[k]) moveRes = tempGame.move(moves[k].move, {sloppy:true});
                     });
-
                     if(moveRes) speakMove(moveRes);
-                    
                     lastMoveCount = validMoveCount;
                 }
             } else {
